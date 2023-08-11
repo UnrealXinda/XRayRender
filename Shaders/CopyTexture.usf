@@ -1,0 +1,13 @@
+#include "/Engine/Private/Common.ush"
+
+Texture2D InputTexture;
+SamplerState InputSampler;
+
+float4 Main(
+	noperspective float4 UVAndScreenPos : TEXCOORD0
+	) : SV_Target0
+{
+	const float2 UV = UVAndScreenPos.xy;
+	const float4 Color = Texture2DSample(InputTexture, InputSampler, UV);
+	return float4(Color.r, Color.r, Color.r, 1.0);
+}

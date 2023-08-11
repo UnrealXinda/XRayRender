@@ -1,0 +1,81 @@
+#include "/Engine/Private/RayTracing/RayTracingHitGroupCommon.ush"
+
+float4x4 ClipToView;
+float4x4 ClipToTranslatedWorld;
+float NearPlane;
+float MinAttenuation;
+float MaxAttenuation;
+float ExpAttenuation;
+
+RaytracingAccelerationStructure TLAS;
+RWTexture2D<float> AttenuationTexture;
+
+inline RayDesc CreatePrimaryRay(uint2 PixelCoord)
+{
+	float2 XY = PixelCoord + 0.5f; // center in the middle of the pixel.
+	float2 ScreenPosition = XY / DispatchRaysDimensions().xy * 2.0 - 1.0;
+
+	// Invert Y for DirectX-style coordinates.
+	ScreenPosition.y = -ScreenPosition.y;
+
+	RayDesc Ray;
+	float4 NearPoint = mul(float4(ScreenPosition, 1, 1), ClipToTranslatedWorld);
+	float4 FarPoint = mul(float4(ScreenPosition, 0, 1), ClipToTranslatedWorld);
+	Ray.Origin = NearPoint.xyz * rcp(NearPoint.w);
+	Ray.Direction = normalize(NearPoint.w * FarPoint.xyz - FarPoint.w * NearPoint.xyz);
+
+	// extract far plane (ortho only, so ignore distinction between T and Z)
+	float4 Back = mul(float4(0, 0, 0, 1), ClipToView);
+	Ray.TMin = 0;
+	Ray.TMax = Back.w > 0 ? (Back.z / Back.w - NearPlane) : POSITIVE_INFINITY;
+
+	return Ray;
+}
+
+[shader("raygeneration")]
+void XRayMainRG()
+{
+	const RayDesc Ray = CreatePrimaryRay(DispatchRaysIndex().xy);
+
+	const uint InstanceInclusionMask = ~0;
+	const uint RayContributionToHitGroupIndex = 0;
+	const uint MultiplierForGeometryContributionToShaderIndex = 0;
+	const uint MissShaderIndex = 1;
+
+	FMinimalPayload Payload = (FMinimalPayload) 0;
+
+	TraceRay(
+		TLAS,
+		// It seems that all geometry instances in UE are built as non-opaque
+		RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_NON_OPAQUE,
+		InstanceInclusionMask,
+		RayContributionToHitGroupIndex,
+		MultiplierForGeometryContributionToShaderIndex,
+		MissShaderIndex,
+		Ray,
+		Payload);
+
+	const float Attenuation = saturate(smoothstep(MinAttenuation, MaxAttenuation, Payload.HitT));
+	const float PoweredAttenuation = pow(Attenuation, ExpAttenuation);
+
+	AttenuationTexture[DispatchRaysIndex().xy] = PoweredAttenuation;
+}
+
+[shader("closesthit")]
+void XRayMainCHS(inout FMinimalPayload Payload, in FRayTracingIntersectionAttributes Attributes)
+{
+	// Intentionally left blank
+}
+
+[shader("anyhit")]
+void XRayMainAHS(inout FMinimalPayload Payload, in FRayTracingIntersectionAttributes Attributes)
+{
+	Payload.HitT += (HitKind() == HIT_KIND_TRIANGLE_BACK_FACE) ? RayTCurrent() : -RayTCurrent();
+	IgnoreHit();
+}
+
+[shader("miss")]
+void XRayMainMS(inout FMinimalPayload Payload)
+{
+	Payload.HitT = 0.0;
+}
