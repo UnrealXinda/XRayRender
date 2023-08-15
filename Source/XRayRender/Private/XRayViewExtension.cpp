@@ -87,7 +87,7 @@ bool FXRayViewExtension::IsActiveThisFrame_Internal(const FSceneViewExtensionCon
 
 	// Render target may not be ready upon engine start
 	const ETextureCreateFlags RenderTargetFlags = CachedRenderTargetRHI->GetDesc().Flags;
-	if (!EnumHasAnyFlags(RenderTargetFlags, TexCreate_RenderTargetable | TexCreate_ResolveTargetable))
+	if (!EnumHasAnyFlags(RenderTargetFlags, TexCreate_RenderTargetable))
 	{
 		return false;
 	}
