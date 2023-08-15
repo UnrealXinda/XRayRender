@@ -85,6 +85,13 @@ bool FXRayViewExtension::IsActiveThisFrame_Internal(const FSceneViewExtensionCon
 		return false;
 	}
 
+	// Render target may not be ready upon engine start
+	const ETextureCreateFlags RenderTargetFlags = CachedRenderTargetRHI->GetDesc().Flags;
+	if (!EnumHasAnyFlags(RenderTargetFlags, TexCreate_RenderTargetable | TexCreate_ResolveTargetable))
+	{
+		return false;
+	}
+
 	XRayRenderSettings.MinAttenuation = Settings->MinAttenuation;
 	XRayRenderSettings.MaxAttenuation = Settings->MaxAttenuation;
 	XRayRenderSettings.ExpAttenuation = Settings->ExpAttenuation;
