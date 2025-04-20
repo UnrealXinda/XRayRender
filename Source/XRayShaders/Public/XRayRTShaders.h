@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "DataDrivenShaderPlatformInfo.h"
 #include "RayTracingPayloadType.h"
 #include "ShaderParameterStruct.h"
 
@@ -18,7 +19,8 @@ class XRAYSHADERS_API FXRayMainRG : public FGlobalShader
 		SHADER_PARAMETER(float, MaxAttenuation)
 		SHADER_PARAMETER(float, ExpAttenuation)
 
-		SHADER_PARAMETER_SRV(RaytracingAccelerationStructure, TLAS)
+		// SHADER_PARAMETER_SRV(RaytracingAccelerationStructure, TLAS)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, AttenuationTexture)
 	END_SHADER_PARAMETER_STRUCT()
 

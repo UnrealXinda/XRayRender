@@ -4,10 +4,10 @@
 
 #include "CopyTexturePS.h"
 #include "ScenePrivate.h"
+#include "SceneRendering.h"
 #include "XRayRenderSettings.h"
 #include "XRayRTShaders.h"
 #include "Engine/TextureRenderTarget2D.h"
-#include "Renderer/Private/ScreenPass.h"
 
 namespace
 {
@@ -120,9 +120,9 @@ void FXRayViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuild
 		return;
 	}
 
-	FRHIRayTracingScene* RayTracingScene = Scene->RayTracingScene.GetRHIRayTracingScene();
-	ensureMsgf(RayTracingScene, TEXT("Ray tracing scene is expected to be created at this point."));
-	if (!RayTracingScene)
+	FRHIRayTracingScene* RHIRayTracingScene = Scene->RayTracingScene.GetRHIRayTracingScene(ERayTracingSceneLayer::Base);
+	ensureMsgf(RHIRayTracingScene, TEXT("Ray tracing scene is expected to be created at this point."));
+	if (!RHIRayTracingScene)
 	{
 		return;
 	}
@@ -142,7 +142,7 @@ void FXRayViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuild
 	const TShaderMapRef<FXRayMainMS> MissShader{GlobalShaderMap};
 
 	const FViewMatrices& ViewMatrices = ViewInfo.ViewMatrices;
-	FRHIShaderResourceView* TLAS = Scene->RayTracingScene.GetLayerSRVChecked(ERayTracingSceneLayer::Base);
+	FRDGBufferSRVRef TLAS = Scene->RayTracingScene.GetLayerView(ERayTracingSceneLayer::Base);
 	FRDGTextureRef XRayTexture = GraphBuilder.CreateTexture(Desc, TEXT("XRayTexture"));
 	FRDGTextureUAVRef XRayTextureUAV = GraphBuilder.CreateUAV(XRayTexture);
 
@@ -157,12 +157,21 @@ void FXRayViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuild
 		Parameters->MaxAttenuation              = XRayRenderSettings.MaxAttenuation;
 		Parameters->ExpAttenuation              = XRayRenderSettings.ExpAttenuation;
 
+		const FRayTracingScene& RayTracingScene = Scene->RayTracingScene;
+		const FRayTracingShaderBindingTable& RayTracingSBT = Scene->RayTracingSBT; //ViewInfo.RayTracingSBT
+
+		ClearUnusedGraphResources(RayGenShader, Parameters);
+
 		GraphBuilder.AddPass(
 			RDG_EVENT_NAME("XRayRendering"),
 			Parameters,
 			ERDGPassFlags::Compute,
-			[RayGenShader, AnyHitShader, MissShader, Parameters, ViewWidth, ViewHeight, RayTracingScene, this](FRHICommandList& RHICmdList)
+			[RayGenShader, AnyHitShader, MissShader, Parameters, ViewWidth, ViewHeight, &RayTracingScene, &RayTracingSBT, this](FRHICommandList& RHICmdList)
 			{
+				// FRayTracingShaderBindingsWriter GlobalResources{};
+				FRHIBatchedShaderParameters& GlobalResources = RHICmdList.GetScratchShaderParameters();
+				SetShaderParameters(GlobalResources, RayGenShader, *Parameters);
+
 				FRHIRayTracingShader* RayGenShaderTable[] = { RayGenShader.GetRayTracingShader() };
 				FRHIRayTracingShader* HitGroupTable[]     = { AnyHitShader.GetRayTracingShader() };
 				FRHIRayTracingShader* MissShaderTable[]   = { MissShader.GetRayTracingShader() };
@@ -172,18 +181,23 @@ void FXRayViewExtension::PrePostProcessPass_RenderThread(FRDGBuilder& GraphBuild
 				Initializer.SetRayGenShaderTable(RayGenShaderTable);
 				Initializer.SetHitGroupTable(HitGroupTable);
 				Initializer.SetMissShaderTable(MissShaderTable);
-				Initializer.bAllowHitGroupIndexing = false; // Use the same hit shader for all geometry in the scene by disabling SBT indexing.
 
 				FRayTracingPipelineState* Pipeline = PipelineStateCache::GetAndOrCreateRayTracingPipelineState(RHICmdList, Initializer);
-				RHICmdList.SetRayTracingMissShader(RayTracingScene, 0, Pipeline, 0 /* ShaderIndexInPipeline */, 0, nullptr, 0);
+				FShaderBindingTableRHIRef SBT = RayTracingSBT.AllocateRHI(
+					RHICmdList,
+					ERayTracingShaderBindingMode::RTPSO,
+					ERayTracingHitGroupIndexingMode::Disallow,
+					RayTracingScene.NumMissShaderSlots,
+					RayTracingScene.NumCallableShaderSlots,
+					Initializer.GetMaxLocalBindingDataSize());
 
-				FRayTracingShaderBindingsWriter GlobalResources{};
-				SetShaderParameters(GlobalResources, RayGenShader, *Parameters);
-
+				RHICmdList.SetDefaultRayTracingHitGroup(SBT, Pipeline, 0);
+				RHICmdList.SetRayTracingMissShader(SBT, 0, Pipeline, 0 /* ShaderIndexInPipeline */, 0, nullptr, 0);
+				RHICmdList.CommitShaderBindingTable(SBT);
 				RHICmdList.RayTraceDispatch(
 					Pipeline,
 					RayGenShader.GetRayTracingShader(),
-					RayTracingScene,
+					SBT,
 					GlobalResources,
 					ViewWidth,
 					ViewHeight);
